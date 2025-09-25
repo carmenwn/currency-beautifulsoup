@@ -1,13 +1,6 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Thu Sep 25 07:59:41 2025
-
-@author: admin
-"""
-
 import asyncio
-import csv, os
-from datetime import datetime
+import csv, os, streamlit as st
+from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -53,28 +46,48 @@ def save_to_csv(value):
         writer.writerow([datetime.now().isoformat()] + list(value.values()))
 
 
-def update_graph(filename="data.csv", graph="graph.png"):
+def update_graph(selected, filename="data.csv", graph="graph.png"):
     df = pd.read_csv(filename)
     df["datetime"] = pd.to_datetime(df["datetime"])
+    df.set_index("datetime", inplace=True)
     if len(df) >= 28:
         df["date"] = df["datetime"].dt.date
         df = df.groupby("date").mean(numeric_only=True)
         df.set_index("date", inplace=True)
-        
-    df.set_index("datetime", inplace=True)
-    axes = df.plot(subplots=True, figsize=(10,8), marker="o", grid=True, legend=True)
+    plot_df=df.copy()
+    if selected == "monthly":
+        plot_df = df.resample("ME").mean()
+        plot_df.index= plot_df.index.strftime("%b").last("12ME")
+        st.subheader("Monthly Trend (Average)")
+    else:
+        days=0
+        if selected == "28days":
+            days=28
+            st.subheader("Last 28 Days (Daily)")
+        elif selected == "90days":
+            days=90
+            st.subheader("3-Month Trend (Daily)")
+        end = df.index.max()             
+        start = end - timedelta(days) 
+        plot_df = df.loc[start:end]
 
-    for i, col in enumerate(df.columns):
-        ax = axes[i]
-        x = df.index[-1]
-        y = df[col].iloc[-1]
-        ax.text(x, y, f"{y:.2f}", fontsize=9, ha="left", va="bottom")
-    
-    plt.suptitle("Currencies over Time", fontsize=14)
-    plt.tight_layout()
+    # --- Plot ---
+    fig, axes = plt.subplots(len(plot_df.columns), 1, figsize=(10, 2*len(plot_df.columns)), sharex=True)
+    if len(plot_df.columns) == 1:
+        axes = [axes]
+
+    for ax, col in zip(axes, plot_df.columns):
+        ax.plot(plot_df.index, plot_df[col], marker="o", label=col)
+        ax.set_ylabel(col)
+        x = plot_df.index[-1]
+        y = plot_df[col].iloc[-1]
+        ax.text(x, y, f"{y:.2f}", ha="left", va="bottom")
+        ax.grid(True)
+    plt.xlabel("Date")
     plt.savefig(graph)
-    plt.close()
-    
+    st.pyplot(fig)
+    result = send_to_telegram(graph_file, BOT_TOKEN, CHAT_ID)
+   
 if __name__ == "__main__":
     value={}
     currency=['JPY','TWD','THB','CNY','USD']
@@ -84,6 +97,16 @@ if __name__ == "__main__":
     for country in currency:
         value[country] = scrape_value(country)
     save_to_csv(value)
-    update_graph()
-    print(f"[{datetime.now()}] Saved value: {value}")
-    result = send_to_telegram(graph_file, BOT_TOKEN, CHAT_ID)
+    st.title("Currency Trend Dashboard")
+    col1, col2, col3 = st.columns(3)
+    
+    selected = None
+    update_graph(selected)
+    if col1.button("28 Days"):
+        selected = "28days"
+    if col2.button("90 Days"):
+        selected = "90days"
+    if col3.button("Monthly Trend"):
+        selected = "monthly"
+    
+    
